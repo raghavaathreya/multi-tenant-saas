@@ -1,0 +1,92 @@
+name: CI/CD Pipeline
+
+# Trigger: runs on every push to main branch
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]  # also runs tests on PRs but doesn't deploy
+
+jobs:
+
+  # ─── JOB 1: TEST ────────────────────────────────────────────────────────────
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+          cache: 'npm'          # cache node_modules between runs — faster builds
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test
+        env:
+          NODE_ENV: test
+          JWT_SECRET: test_secret_for_ci
+          JWT_EXPIRES_IN: 1d
+
+  # ─── JOB 2: BUILD & PUSH DOCKER IMAGE ───────────────────────────────────────
+  build:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: test              # only runs if tests pass
+    if: github.ref == 'refs/heads/main'  # only on main branch, not PRs
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          # tags the image as both "latest" and the commit SHA for rollbacks
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/multi-tenant-saas:latest
+            ${{ secrets.DOCKER_USERNAME }}/multi-tenant-saas:${{ github.sha }}
+
+  # ─── JOB 3: DEPLOY TO AWS EC2 ───────────────────────────────────────────────
+  deploy:
+    name: Deploy to AWS EC2
+    runs-on: ubuntu-latest
+    needs: build             # only runs if build + push succeeded
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd ~/multi-tenant-saas
+
+            # Pull the latest image from Docker Hub
+            docker pull ${{ secrets.DOCKER_USERNAME }}/multi-tenant-saas:latest
+
+            # Update the image tag in docker-compose
+            export IMAGE=${{ secrets.DOCKER_USERNAME }}/multi-tenant-saas:latest
+
+            # Restart only the app container — keeps Postgres/Mongo/Redis running
+            docker-compose up -d --no-deps app
+
+            # Clean up old unused images to free disk space
+            docker image prune -f
+
+            echo "✅ Deployment complete"

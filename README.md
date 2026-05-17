@@ -1,9 +1,15 @@
-# TaskFlow — Multi-Tenant SaaS Backend
+# TaskFlow — Multi-Tenant SaaS Application
 
-> A production-grade multi-tenant task management platform built from scratch with Node.js, Express, PostgreSQL, MongoDB, Redis, Docker, and AWS.
+> A production-grade multi-tenant task management platform built from scratch with Node.js, Express, PostgreSQL, MongoDB, Redis, Docker, AWS EC2, and Netlify.
 
 ![Dashboard](./screenshots/dashboard.png)
 
+---
+
+## Live Demo
+
+- **Frontend:** https://multi-tenant-saas-application.netlify.app
+- **API Health:** http://54.157.27.41:3001/health
 
 ---
 
@@ -17,6 +23,7 @@
 - **Dual Database** — PostgreSQL for relational identity data, MongoDB for flexible task documents
 - **Dockerized** — all 4 services (app, postgres, mongo, redis) run with one `docker-compose up`
 - **CI/CD** — GitHub Actions pipeline: test → build Docker image → deploy to AWS EC2
+- **Cloud Deployed** — backend running on AWS EC2, frontend hosted on Netlify CDN
 
 ---
 
@@ -47,16 +54,21 @@
 | Document DB | MongoDB 6 + Mongoose |
 | Cache / Rate Limit | Redis 7 + ioredis |
 | Frontend | React 18 + Vite |
+| Frontend Hosting | Netlify |
 | Containerization | Docker + docker-compose |
 | CI/CD | GitHub Actions |
-| Cloud | AWS EC2 |
+| Cloud | AWS EC2 (t2.micro) |
 
 ---
 
 ## Architecture
 
 ```
-Client (React)
+Client (React — Netlify CDN)
+      ↓
+Netlify Proxy (_redirects)
+      ↓
+AWS EC2 — Node.js + Express
       ↓
 Rate Limiter (Redis — per-tenant sliding window)
       ↓
@@ -65,8 +77,6 @@ Auth Middleware (JWT verify + Redis blacklist check)
 Tenant Resolver (injects tenant context into request)
       ↓
 RBAC Guard (admin / member / viewer permission map)
-      ↓
-Route Handler
       ↓
 Service Layer
       ↓
@@ -102,7 +112,13 @@ multi-tenant-saas/
 │   └── modules/
 │       ├── auth/        # register, login, logout
 │       └── task/        # CRUD with Redis caching
-├── frontend/            # React + Vite dashboard
+├── frontend/            # React + Vite dashboard (deployed on Netlify)
+│   ├── src/
+│   │   ├── components/  # Auth, Tasks, Layout
+│   │   └── services/    # API calls
+│   └── public/
+│       └── _redirects   # Netlify proxy to EC2
+├── screenshots/         # README screenshots
 ├── docker-compose.yml
 ├── Dockerfile
 └── .github/workflows/   # CI/CD pipeline
@@ -120,7 +136,7 @@ multi-tenant-saas/
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/YOUR_USERNAME/multi-tenant-saas.git
+git clone https://github.com/raghavaathreya/multi-tenant-saas.git
 cd multi-tenant-saas
 
 # 2. Set up environment
@@ -172,6 +188,9 @@ Using Redis directly gives per-tenant isolation. Each tenant gets their own coun
 
 **How does logout work with stateless JWT?**
 On logout, the token's remaining TTL is calculated and the token is stored in Redis with that TTL as expiry. The auth middleware checks Redis before accepting any token. When the TTL expires, Redis auto-removes the key — no cleanup needed.
+
+**How is the frontend deployed separately from the backend?**
+The React frontend is built and deployed to Netlify which serves it via CDN. All API calls from Netlify are proxied to the AWS EC2 backend via a _redirects rule, avoiding mixed content issues between HTTPS and HTTP.
 
 ---
 
